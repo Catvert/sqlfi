@@ -19,6 +19,15 @@ impl MySQL {
         let pool = MySqlPool::connect(uri).await?;
         Ok(MySQL { pool })
     }
+
+    pub async fn list_databases(&self) -> Result<Vec<String>> {
+        let res = sqlx::query("SHOW DATABASES")
+            .map(|r: MySqlRow| r.get::<String, _>(0))
+            .fetch_all(&self.pool)
+            .await?;
+
+        Ok(res)
+    }
 }
 
 fn decode<'r, T>(value: MySqlValueRef<'r>) -> Result<T>
@@ -117,7 +126,7 @@ impl SGDB for MySQL {
         })
     }
 
-    async fn tables(&self, schema: &str) -> Result<Vec<super::SGDBTable>> {
+    async fn list_tables(&self, schema: &str) -> Result<Vec<super::SGDBTable>> {
         let tables = sqlx::query(
             "SELECT table_name, table_type, engine, version, table_rows, create_time FROM INFORMATION_SCHEMA.TABLES WHERE table_schema = ?",
         )

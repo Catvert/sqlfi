@@ -2,30 +2,33 @@ use std::collections::HashMap;
 
 use serde::{Serialize, Deserialize};
 
-use crate::db::sgdb::{SGDBFetchResult, SGDBColumn, SGDBColumnType};
+use crate::{db::sgdb::{SGDBFetchResult, SGDBColumn, SGDBColumnType}, ui::components::icons};
 
 #[derive(Serialize, Deserialize, Debug, Clone, Copy)]
-pub enum MetaViewType {
-    Table, Grid
+pub enum MetaQueryType {
+    Table, Grid { columns: u8 },
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
-pub struct MetaView {
-    meta_type: MetaViewType,
+pub struct MetaQuery {
+    icon: String,
+    name: String,
+    query: String,
+    meta_type: MetaQueryType,
     meta_columns: HashMap<String, MetaColumn>
 }
 
 
-impl MetaView {
-    pub fn default_sgdb_result(res: &SGDBFetchResult) -> Self {
+impl MetaQuery {
+    pub fn new(name: impl Into<String>, query: impl Into<String>, res: &SGDBFetchResult) -> Self {
         let meta_columns = res.data.keys().map(|col| { (col.name().to_string(), MetaColumn::default_sgdb_column(col.r#type())) }).collect();
 
-        Self { meta_type: MetaViewType::Table, meta_columns }
+        Self { icon: icons::ICON_TABLE.to_string(), name: name.into(), query: query.into(), meta_type: MetaQueryType::Table, meta_columns }
     }
 
     #[inline]
-    pub fn meta_column(&self, col: &SGDBColumn) -> &MetaColumn {
-        self.meta_columns.get(col.name()).unwrap()
+    pub fn meta_column(&self, col: &SGDBColumn) -> Option<&MetaColumn> {
+        self.meta_columns.get(col.name())
     }
 }
 

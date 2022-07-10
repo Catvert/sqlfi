@@ -1,25 +1,25 @@
 use eframe::{
-    egui::{Label, Layout, Ui},
+    egui::{Layout, Ui},
     emath::Align,
     epaint::Color32,
 };
 
 use crate::{
     db::sgdb::SGDBRowValue,
-    meta::{MetaColNumber, MetaColumn, MetaView},
+    meta::{MetaColNumber, MetaColumn},
 };
 
-pub trait MetaViewTable {
-    fn table_cell(&self, ui: &mut Ui, meta_column: &MetaColumn, field: &SGDBRowValue);
+pub trait MetaTableCell {
+    fn table_cell(&self, ui: &mut Ui, field: &SGDBRowValue);
 }
 
-impl MetaViewTable for MetaView {
+impl MetaTableCell for MetaColumn {
     #[inline]
-    fn table_cell(&self, ui: &mut Ui, meta_column: &MetaColumn, field: &SGDBRowValue) {
+    fn table_cell(&self, ui: &mut Ui, field: &SGDBRowValue) {
         let invalid_type = |ui: &mut Ui| {
             ui.label(format!(
                 "Invalid meta column type ({:?}) for {:?}",
-                meta_column, field
+                self, field
             ))
         };
 
@@ -28,7 +28,7 @@ impl MetaViewTable for MetaView {
                 ui.colored_label(Color32::LIGHT_BLUE, "null");
             });
         } else {
-            match meta_column {
+            match self {
                 MetaColumn::Text { color } => {
                     ui.with_layout(Layout::left_to_right(), |ui| {
                         if let SGDBRowValue::Text(text) = field {

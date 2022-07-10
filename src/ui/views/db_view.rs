@@ -1,9 +1,10 @@
 use std::{
+    future::Future,
     sync::{
         mpsc::{self, Sender},
         Arc, Mutex,
     },
-    thread::{self, JoinHandle},
+    thread::{self, JoinHandle}, collections::HashMap,
 };
 
 use eframe::{
@@ -11,33 +12,20 @@ use eframe::{
     emath::{Align, Vec2},
     epaint::Color32,
 };
-use tokio::runtime::Builder;
+use log::info;
 
 use crate::{
     db::{
-        sgdb::{connect, SGDBFetchResult, SGDBKind, SGDBTable},
-        DBRelay, Message, MessageResponse,
-    },
-    meta::MetaView,
+        sgdb::{ConnectionSchema, SGDBFetchResult, SGDBTable},
+        Message, MessageResponse, },
+    meta::{MetaColumn, MetaQuery},
     ui::{
-        components::{icons, sql_editor, top_menu},
-        meta::MetaViewTable,
+        components::{icons, sql_editor},
+        meta::{MetaTableCell},
     },
 };
 
-enum QueryState<T> {
-    Success(T),
-    Waiting,
-    Ready,
-    Error(String),
-}
-
-impl<T> QueryState<T> {
-    fn query<ID>(&mut self, tx: &Sender<Message<ID>>, msg: Message<ID>) {
-        *self = QueryState::Waiting;
-        tx.send(msg).unwrap();
-    }
-}
+use super::{QueryState, ShareDB, View};
 
 #[derive(Clone, Copy)]
 pub enum MessageID {
@@ -56,88 +44,71 @@ pub struct DBView {
     handle_ui: Option<JoinHandle<()>>,
     handle_db: Option<JoinHandle<()>>,
 
-    schema: String,
-
-    fetch_result: Arc<Mutex<QueryState<(MetaView, SGDBFetchResult)>>>,
+    fetch_result: ShareDB<QueryState<(HashMap<String, MetaColumn>, SGDBFetchResult)>>,
 
     query_history: Vec<String>,
-    backtraces: Arc<Mutex<Vec<String>>>,
+    backtraces: ShareDB<Vec<String>>,
     query: String,
 
-    tables: Arc<Mutex<QueryState<Vec<SGDBTable>>>>,
+    tables: ShareDB<QueryState<Vec<SGDBTable>>>,
 
+    show_left_panel: bool,
+    show_bottom_panel: bool,
     bottom_tab: BottomTab,
+
+    schema: String,
 }
 
 impl DBView {
-    pub fn spawn_view(uri: impl Into<String>, schema: impl Into<String>) -> Self {
-        let (tx_ui, mut rx_db) = mpsc::channel();
-        let (tx_db, mut rx_ui) = mpsc::channel();
+    pub fn spawn_view(con: ConnectionSchema) -> Self {
+        let (tx_ui, rx_ui) = mpsc::channel();
+        let (tx_db, rx_db) = mpsc::channel();
 
-        let uri = uri.into();
-        let handle_db = thread::spawn(move || {
-            let runtime = Builder::new_current_thread()
-                .enable_all()
-                .worker_threads(4)
-                .build()
-                .unwrap();
+        let schema: String = con.schema().to_string();
 
-            runtime.block_on(async move {
-                let sgdb = connect(SGDBKind::MySQL, &uri).await.unwrap();
-                let db = DBRelay::new(sgdb, tx_db, rx_db).await;
-                db.run().await;
-            });
-        });
+        let handle_db = super::spawn_sgdb_relay(con, tx_db, rx_ui);
 
-        let mut backtraces = Arc::new(Mutex::new(vec![]));
-        let backtraces_ui = backtraces.clone();
-
-        let mut fetch_result = Arc::new(Mutex::new(QueryState::Ready));
-        let fetch_ui = fetch_result.clone();
-
-        let mut tables = Arc::new(Mutex::new(QueryState::Ready));
-        let tables_ui = tables.clone();
+        let backtraces: (ShareDB<Vec<String>>, _) = ShareDB::default().duplicate();
+        let fetch_result = ShareDB::default().duplicate();
+        let tables = ShareDB::default().duplicate();
 
         let handle_ui = thread::spawn(move || {
-            while let Ok(msg) = rx_ui.recv() {
+            while let Ok(msg) = rx_db.recv() {
                 match msg {
                     MessageResponse::FetchAllResult(id, res) => match id {
                         MessageID::InsertRow => {}
                         MessageID::FetchAllResult => {
                             match res {
                                 Ok(res) => {
-                                    let meta = MetaView::default_sgdb_result(&res);
-                                    *fetch_ui.lock().unwrap() = QueryState::Success((meta, res));
+                                    let meta_columns = res.data.keys().map(|col| { (col.name().to_string(), MetaColumn::default_sgdb_column(col.r#type())) }).collect();
+                                    fetch_result.1.set(QueryState::Success((meta_columns, res)));
                                 }
                                 Err(err) => {
-                                    *fetch_ui.lock().unwrap() =
-                                        QueryState::Error(format!("{}", err));
-                                    backtraces_ui.lock().unwrap().push(format!("{}", err));
+                                    fetch_result.1.set(QueryState::Error(format!("{}", err)));
+
+                                    backtraces.1.lock().push(format!("{}", err));
                                 }
                             }
                             // *crows.lock().unwrap() = rows;
                         }
                     },
-                    MessageResponse::Connected => todo!(),
                     MessageResponse::Closed => {
                         break;
                     }
                     MessageResponse::TablesResult(res) => match res {
                         Ok(res) => {
-                            *tables_ui.lock().unwrap() = QueryState::Success(res);
+                            tables.1.set(QueryState::Success(res));
                         }
                         Err(err) => {
-                            *fetch_ui.lock().unwrap() = QueryState::Error(format!("{}", err));
-                            backtraces_ui.lock().unwrap().push(format!("{}", err));
+                            fetch_result.1.set(QueryState::Error(format!("{}", err)));
+                            backtraces.1.lock().push(format!("{}", err));
                         }
                     },
                 }
             }
         });
 
-        let schema = schema.into();
-
-        tables.lock().unwrap().query(
+        tables.0.lock().query(
             &tx_ui,
             Message::FetchTables {
                 schema: schema.clone(),
@@ -149,33 +120,18 @@ impl DBView {
             handle_db: Some(handle_db),
             tx: tx_ui,
             query: String::new(),
-            backtraces,
-            fetch_result,
-            tables,
-            schema,
+            backtraces: backtraces.0,
+            fetch_result: fetch_result.0,
+            tables: tables.0,
 
             query_history: vec![],
             bottom_tab: BottomTab::Query,
-        }
-    }
 
-    fn show_top_panel(&mut self, ui: &mut Ui) {
-        egui::TopBottomPanel::top("top_panel")
-            .resizable(false)
-            .default_height(100.)
-            .frame(Frame::none())
-            .show_inside(ui, |ui| {
-                ui.horizontal(|ui| {
-                    top_menu(ui);
-                    ui.menu_button("Actions", |ui| {
-                        ui.button("E.g: Insert a new row");
-                    });
-                    ui.with_layout(Layout::right_to_left(), |ui| {
-                        ui.text_edit_singleline(&mut "Search..");
-                        ui.separator();
-                    });
-                });
-            });
+            show_left_panel: true,
+            show_bottom_panel: true,
+
+            schema,
+        }
     }
 
     fn show_left_panel(&mut self, ui: &mut Ui) {
@@ -188,18 +144,22 @@ impl DBView {
                     ui.heading("Tables");
                     ui.with_layout(Layout::right_to_left(), |ui| {
                         if ui.button(icons::ICON_REFRESH).clicked() {
-                            self.tables.lock().unwrap().query(
+                            self.tables.lock().query(
                                 &self.tx,
                                 Message::FetchTables {
                                     schema: self.schema.clone(),
                                 },
                             );
                         }
+
+                        // ui.menu_button(&self.schema, |ui| {
+                        //     ui.radio(true, &self.schema);
+                        // });
                     });
                 });
 
                 ui.separator();
-                ScrollArea::both().show(ui, |ui| match &*self.tables.lock().unwrap() {
+                ScrollArea::both().show(ui, |ui| match &*self.tables.lock() {
                     QueryState::Success(res) => {
                         ui.vertical(|ui| {
                             for table in res.iter() {
@@ -216,7 +176,7 @@ impl DBView {
                                         self.query =
                                             format!("SELECT * FROM `{}`", table.table_name);
 
-                                        self.fetch_result.lock().unwrap().query(
+                                        self.fetch_result.lock().query(
                                             &self.tx,
                                             Message::FetchAll(
                                                 MessageID::FetchAllResult,
@@ -267,7 +227,7 @@ impl DBView {
 
                         ui.with_layout(Layout::right_to_left(), |ui| {
                             if ui.button(icons::ICON_RUN).clicked() {
-                                self.fetch_result.lock().unwrap().query(
+                                self.fetch_result.lock().query(
                                     &self.tx,
                                     Message::FetchAll(
                                         MessageID::FetchAllResult,
@@ -277,7 +237,7 @@ impl DBView {
                             }
 
                             if ui.button(icons::ICON_TRASH).clicked() {
-                                *self.fetch_result.lock().unwrap() = QueryState::Ready;
+                                *self.fetch_result.lock() = QueryState::Ready;
                                 self.query.clear();
                             }
 
@@ -302,7 +262,7 @@ impl DBView {
                                 ui.with_layout(
                                     Layout::top_down(Align::Min).with_cross_justify(true),
                                     |ui| {
-                                        for log in self.backtraces.lock().unwrap().iter() {
+                                        for log in self.backtraces.lock().iter() {
                                             ui.label(log);
                                         }
                                     },
@@ -319,7 +279,7 @@ impl DBView {
             .frame(Frame::group(ui.style()))
             .show_inside(ui, |ui| {
                 egui::ScrollArea::both().show(ui, |ui| {
-                    match &*self.fetch_result.lock().unwrap() {
+                    match &*self.fetch_result.lock() {
                         QueryState::Success((meta, res)) => {
                             table_rows(ui, meta, res);
                         }
@@ -344,16 +304,37 @@ impl DBView {
                 });
             });
     }
+}
 
-    pub fn show(&mut self, ui: &mut Ui) {
-        self.show_top_panel(ui);
-        self.show_left_panel(ui);
-        self.show_bottom_panel(ui);
+impl View for DBView {
+    fn show(&mut self, ui: &mut Ui) {
+        if self.show_left_panel {
+            self.show_left_panel(ui);
+        }
+
+        if self.show_bottom_panel {
+            self.show_bottom_panel(ui);
+        }
+
         self.show_central_panel(ui);
+    }
+
+    fn show_appbar(&mut self, ui: &mut Ui) {
+        ui.menu_button("View", |ui| {
+            ui.checkbox(&mut self.show_left_panel, "Show left panel");
+            ui.checkbox(&mut self.show_bottom_panel, "Show bottom panel");
+        });
+        ui.menu_button("Actions", |ui| {
+            ui.button("E.g: Insert a new row");
+        });
+        ui.with_layout(Layout::right_to_left(), |ui| {
+            ui.text_edit_singleline(&mut "Search..");
+            ui.separator();
+        });
     }
 }
 
-fn table_rows(ui: &mut egui::Ui, meta: &MetaView, res: &SGDBFetchResult) {
+fn table_rows(ui: &mut egui::Ui, meta_columns: &HashMap<String, MetaColumn>, res: &SGDBFetchResult) {
     use egui_extras::{Size, TableBuilder};
 
     let text_height = egui::TextStyle::Body.resolve(ui.style()).size;
@@ -385,10 +366,11 @@ fn table_rows(ui: &mut egui::Ui, meta: &MetaView, res: &SGDBFetchResult) {
                 table_row.col(|ui| {
                     ui.button(icons::ICON_EDIT);
                 });
+
                 for (col, values) in res.data.iter() {
-                    let meta_column = meta.meta_column(col);
+                    let meta_column = meta_columns.get(col.name()).unwrap();
                     table_row.col(|ui| {
-                        meta.table_cell(ui, meta_column, &values[row_index]);
+                        meta_column.table_cell(ui,  &values[row_index]);
                     });
                 }
             });
@@ -399,6 +381,8 @@ impl Drop for DBView {
     fn drop(&mut self) {
         self.tx.send(Message::Close).unwrap();
 
+        info!("Dropping DB threads..");
+
         if let Some(handle) = self.handle_db.take() {
             handle.join().unwrap();
         }
@@ -406,5 +390,7 @@ impl Drop for DBView {
         if let Some(handle) = self.handle_ui.take() {
             handle.join().unwrap();
         }
+
+        info!("DB threads dropped");
     }
 }
