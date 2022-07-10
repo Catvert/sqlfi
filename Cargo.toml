@@ -1,0 +1,31 @@
+[package]
+name = "sqlfi"
+version = "0.1.0"
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+anyhow = "1.0.58"
+async-trait = "0.1.56"
+bigdecimal = "0.3.0"
+chrono = "0.4.19"
+clap = { version = "3.2.8", features = ["derive"] }
+eframe = { git = "https://github.com/emilk/egui" }
+egui_extras = { git = "https://github.com/emilk/egui", features = [ "image"  ]}
+image = { version = "0.24", default-features = false, features = ["png", "jpeg"] }
+indexmap = { version = "1.9.1", features = ["std"] }
+log = "0.4.17"
+poll-promise = { version = "0.1.0", features = ["tokio"] }
+pretty_env_logger = "0.4.0"
+
+serde = { version = "1.0.137", features = ["derive"] }
+
+sqlx = { version = "0.5", features = ["runtime-tokio-rustls", "mysql", "any", "chrono", "json", "bigdecimal"] }
+syntect = "5.0.0"
+tokio = "1.19.2"
+
+toml = "0.5"
+
+[profile.dev]
+opt-level = 1
