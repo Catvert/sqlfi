@@ -91,6 +91,7 @@ impl SGDBBuilder for ConnectionSchema {
     }
 }
 
+#[derive(Debug)]
 pub struct SGDBTable {
     pub schema: String,
     pub table_name: String,
@@ -117,7 +118,7 @@ pub enum SGDBKind {
     Sqlite,
 }
 
-#[derive(PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq)]
 pub struct SGDBColumn {
     name: String,
     ordinal: usize,
@@ -170,6 +171,7 @@ pub enum SGDBRowValue {
     Unknown { error: String },
 }
 
+#[derive(Debug)]
 pub struct SGDBFetchResult {
     pub data: IndexMap<SGDBColumn, Vec<SGDBRowValue>>,
     pub num_rows: usize,

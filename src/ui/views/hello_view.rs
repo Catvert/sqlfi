@@ -1,24 +1,25 @@
-use eframe::egui::{Layout, self};
+use eframe::egui::{self, Layout};
 
 use super::View;
 
-pub struct HelloView {}
+pub struct DataView;
 
-impl HelloView {
-    pub fn spawn_view() -> Self {
-        HelloView {}
+impl<'a> View<'a, ()> for DataView {
+    fn init(&mut self) {}
+
+    fn from_app(_: &'a mut crate::app::AppData, _: &'a mut ()) -> Self {
+        Self
     }
-}
 
-impl View for HelloView {
-    fn show(&mut self, ui: &mut eframe::egui::Ui) {
+    fn show(&mut self, ui: &mut egui::Ui) {
         ui.with_layout(
-            Layout::centered_and_justified(egui::Direction::TopDown),
-            |ui| {
-                ui.heading("Welcome! To get started, open the 'Connections' menu and add a new connection.");
-            },
-        );
+        Layout::centered_and_justified(egui::Direction::TopDown),
+        |ui| {
+            ui.heading("Welcome! To get started, open the 'Connections' menu and add a new connection.");
+        },
+    );
     }
 
-    fn show_appbar(&mut self, ui: &mut eframe::egui::Ui) {}
+    fn show_appbar(&mut self, ui: &mut egui::Ui) {}
+
 }

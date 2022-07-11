@@ -2,7 +2,7 @@ pub mod meta;
 pub mod views;
 pub mod components;
 
-use eframe::egui::{self, ScrollArea, Style, Visuals};
+use eframe::egui::{self, Style, Visuals};
 use eframe::epaint::{Color32, Stroke};
 use eframe::CreationContext;
 use egui::FontFamily::Proportional;

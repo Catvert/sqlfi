@@ -1,5 +1,4 @@
-use std::collections::HashMap;
-
+use indexmap::IndexMap;
 use serde::{Serialize, Deserialize};
 
 use crate::{db::sgdb::{SGDBKind, ConnectionSchema, Connection}, meta::MetaQuery};
@@ -11,7 +10,7 @@ pub struct ConnectionConfig {
     pub uri: String,
     pub schema: String,
 
-    pub meta_tables: HashMap<String, MetaQuery>
+    pub meta_queries: IndexMap<String, MetaQuery>
 }
 
 impl ConnectionConfig {
@@ -21,7 +20,7 @@ impl ConnectionConfig {
             kind,
             uri: uri.into(),
             schema: schema.into(),
-            meta_tables: HashMap::new()
+            meta_queries: IndexMap::new()
         }
     }
 }

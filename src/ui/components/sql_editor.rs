@@ -224,7 +224,7 @@ impl Highlighter {
         };
 
         for line in LinesWithEndings::from(text) {
-            for (style, range) in h.highlight(line, &self.ps) {
+            for (style, range) in h.highlight_line(line, &self.ps).unwrap() {
                 let fg = style.foreground;
                 let text_color = egui::Color32::from_rgb(fg.r, fg.g, fg.b);
                 let italics = style.font_style.contains(FontStyle::ITALIC);

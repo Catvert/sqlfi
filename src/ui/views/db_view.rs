@@ -1,139 +1,70 @@
 use std::{
-    future::Future,
-    sync::{
-        mpsc::{self, Sender},
-        Arc, Mutex,
-    },
-    thread::{self, JoinHandle}, collections::HashMap,
+    collections::HashMap,
+    sync::mpsc::Sender,
 };
 
 use eframe::{
-    egui::{self, Button, Frame, Layout, RichText, ScrollArea, Ui},
-    emath::{Align, Vec2},
+    egui::{self, Frame, Layout, RichText, ScrollArea, Ui},
+    emath::Align,
     epaint::Color32,
 };
-use log::info;
+use serde::{Deserialize, Serialize};
 
 use crate::{
+    app::AppData,
     db::{
-        sgdb::{ConnectionSchema, SGDBFetchResult, SGDBTable},
-        Message, MessageResponse, },
-    meta::{MetaColumn, MetaQuery},
+        sgdb::{SGDBFetchResult, SGDBTable},
+        Message,
+    },
+    meta::MetaColumn,
     ui::{
         components::{icons, sql_editor},
-        meta::{MetaTableCell},
+        meta::MetaTableCell,
     },
 };
 
-use super::{QueryState, ShareDB, View};
+use super::{MessageID, QueryState, ShareDB, View};
 
-#[derive(Clone, Copy)]
-pub enum MessageID {
-    InsertRow,
-    FetchAllResult,
-}
-
-#[derive(PartialEq, Eq)]
-pub enum BottomTab {
+#[derive(PartialEq, Eq, Serialize, Deserialize)]
+enum BottomTab {
     Query,
     Logs,
 }
 
-pub struct DBView {
-    tx: Sender<Message<MessageID>>,
-    handle_ui: Option<JoinHandle<()>>,
-    handle_db: Option<JoinHandle<()>>,
-
-    fetch_result: ShareDB<QueryState<(HashMap<String, MetaColumn>, SGDBFetchResult)>>,
-
-    query_history: Vec<String>,
-    backtraces: ShareDB<Vec<String>>,
-    query: String,
-
-    tables: ShareDB<QueryState<Vec<SGDBTable>>>,
-
+#[derive(Serialize, Deserialize)]
+pub struct DBViewData {
     show_left_panel: bool,
     show_bottom_panel: bool,
     bottom_tab: BottomTab,
 
-    schema: String,
+    query_history: Vec<String>,
+    query: String,
 }
 
-impl DBView {
-    pub fn spawn_view(con: ConnectionSchema) -> Self {
-        let (tx_ui, rx_ui) = mpsc::channel();
-        let (tx_db, rx_db) = mpsc::channel();
-
-        let schema: String = con.schema().to_string();
-
-        let handle_db = super::spawn_sgdb_relay(con, tx_db, rx_ui);
-
-        let backtraces: (ShareDB<Vec<String>>, _) = ShareDB::default().duplicate();
-        let fetch_result = ShareDB::default().duplicate();
-        let tables = ShareDB::default().duplicate();
-
-        let handle_ui = thread::spawn(move || {
-            while let Ok(msg) = rx_db.recv() {
-                match msg {
-                    MessageResponse::FetchAllResult(id, res) => match id {
-                        MessageID::InsertRow => {}
-                        MessageID::FetchAllResult => {
-                            match res {
-                                Ok(res) => {
-                                    let meta_columns = res.data.keys().map(|col| { (col.name().to_string(), MetaColumn::default_sgdb_column(col.r#type())) }).collect();
-                                    fetch_result.1.set(QueryState::Success((meta_columns, res)));
-                                }
-                                Err(err) => {
-                                    fetch_result.1.set(QueryState::Error(format!("{}", err)));
-
-                                    backtraces.1.lock().push(format!("{}", err));
-                                }
-                            }
-                            // *crows.lock().unwrap() = rows;
-                        }
-                    },
-                    MessageResponse::Closed => {
-                        break;
-                    }
-                    MessageResponse::TablesResult(res) => match res {
-                        Ok(res) => {
-                            tables.1.set(QueryState::Success(res));
-                        }
-                        Err(err) => {
-                            fetch_result.1.set(QueryState::Error(format!("{}", err)));
-                            backtraces.1.lock().push(format!("{}", err));
-                        }
-                    },
-                }
-            }
-        });
-
-        tables.0.lock().query(
-            &tx_ui,
-            Message::FetchTables {
-                schema: schema.clone(),
-            },
-        );
-
+impl Default for DBViewData {
+    fn default() -> Self {
         Self {
-            handle_ui: Some(handle_ui),
-            handle_db: Some(handle_db),
-            tx: tx_ui,
-            query: String::new(),
-            backtraces: backtraces.0,
-            fetch_result: fetch_result.0,
-            tables: tables.0,
-
-            query_history: vec![],
-            bottom_tab: BottomTab::Query,
-
             show_left_panel: true,
             show_bottom_panel: true,
-
-            schema,
+            bottom_tab: BottomTab::Query,
+            query_history: vec![],
+            query: String::new(),
         }
     }
+}
 
+pub struct DataView<'a> {
+    pub tx: Sender<Message<MessageID>>,
+
+    pub tables: &'a ShareDB<QueryState<Vec<SGDBTable>>>,
+    pub fetch_result: &'a ShareDB<QueryState<(HashMap<String, MetaColumn>, SGDBFetchResult)>>,
+    pub backtraces: &'a ShareDB<Vec<String>>,
+    pub schema: &'a str,
+
+    pub view: &'a mut DBViewData,
+}
+
+impl<'a> DataView<'a> {
     fn show_left_panel(&mut self, ui: &mut Ui) {
         egui::SidePanel::left("left_panel")
             .resizable(true)
@@ -144,12 +75,12 @@ impl DBView {
                     ui.heading("Tables");
                     ui.with_layout(Layout::right_to_left(), |ui| {
                         if ui.button(icons::ICON_REFRESH).clicked() {
-                            self.tables.lock().query(
-                                &self.tx,
-                                Message::FetchTables {
-                                    schema: self.schema.clone(),
-                                },
-                            );
+                            // self.tables.lock().query(
+                            //     &self.tx,
+                            //     Message::FetchTables {
+                            //         schema: self.schema.clone(),
+                            //     },
+                            // );
                         }
 
                         // ui.menu_button(&self.schema, |ui| {
@@ -173,14 +104,14 @@ impl DBView {
                                         ))
                                         .clicked()
                                     {
-                                        self.query =
+                                        self.view.query =
                                             format!("SELECT * FROM `{}`", table.table_name);
 
                                         self.fetch_result.lock().query(
                                             &self.tx,
                                             Message::FetchAll(
                                                 MessageID::FetchAllResult,
-                                                self.query.clone(),
+                                                self.view.query.clone(),
                                             ),
                                         );
                                     }
@@ -211,16 +142,16 @@ impl DBView {
                     ui.add_space(4.);
                     ui.horizontal(|ui| {
                         if ui
-                            .selectable_label(self.bottom_tab == BottomTab::Query, "Query")
+                            .selectable_label(self.view.bottom_tab == BottomTab::Query, "Query")
                             .clicked()
                         {
-                            self.bottom_tab = BottomTab::Query;
+                            self.view.bottom_tab = BottomTab::Query;
                         }
                         if ui
-                            .selectable_label(self.bottom_tab == BottomTab::Logs, "Logs")
+                            .selectable_label(self.view.bottom_tab == BottomTab::Logs, "Logs")
                             .clicked()
                         {
-                            self.bottom_tab = BottomTab::Logs;
+                            self.view.bottom_tab = BottomTab::Logs;
                         }
 
                         ui.separator();
@@ -231,14 +162,14 @@ impl DBView {
                                     &self.tx,
                                     Message::FetchAll(
                                         MessageID::FetchAllResult,
-                                        self.query.clone(),
+                                        self.view.query.clone(),
                                     ),
                                 );
                             }
 
                             if ui.button(icons::ICON_TRASH).clicked() {
                                 *self.fetch_result.lock() = QueryState::Ready;
-                                self.query.clear();
+                                self.view.query.clear();
                             }
 
                             ui.menu_button(icons::ICON_HISTORY, |ui| {});
@@ -247,12 +178,12 @@ impl DBView {
 
                     ui.separator();
 
-                    match self.bottom_tab {
+                    match self.view.bottom_tab {
                         BottomTab::Query => {
                             ui.with_layout(
                                 Layout::top_down(Align::Min).with_cross_justify(true),
                                 |ui| {
-                                    sql_editor::code_view_ui(ui, &mut self.query);
+                                    sql_editor::code_view_ui(ui, &mut self.view.query);
                                     ui.add_space(2.);
                                 },
                             );
@@ -306,13 +237,35 @@ impl DBView {
     }
 }
 
-impl View for DBView {
+impl<'a> View<'a, DBViewData> for DataView<'a> {
+    fn from_app(app: &'a mut AppData, data: &'a mut DBViewData) -> Self {
+        DataView {
+            tables: &app.db_data.tables,
+            fetch_result: &app.db_data.fetch_result,
+            backtraces: &app.db_data.backtraces,
+
+            view: data,
+
+            schema: &app.schema,
+            tx: app.tx_sgdb.as_ref().unwrap().clone(),
+        }
+    }
+
+    fn init(&mut self) {
+        self.tables.lock().query(
+            &self.tx,
+            Message::FetchTables {
+                schema: self.schema.to_string(),
+            },
+        );
+    }
+
     fn show(&mut self, ui: &mut Ui) {
-        if self.show_left_panel {
+        if self.view.show_left_panel {
             self.show_left_panel(ui);
         }
 
-        if self.show_bottom_panel {
+        if self.view.show_bottom_panel {
             self.show_bottom_panel(ui);
         }
 
@@ -321,8 +274,8 @@ impl View for DBView {
 
     fn show_appbar(&mut self, ui: &mut Ui) {
         ui.menu_button("View", |ui| {
-            ui.checkbox(&mut self.show_left_panel, "Show left panel");
-            ui.checkbox(&mut self.show_bottom_panel, "Show bottom panel");
+            ui.checkbox(&mut self.view.show_left_panel, "Show left panel");
+            ui.checkbox(&mut self.view.show_bottom_panel, "Show bottom panel");
         });
         ui.menu_button("Actions", |ui| {
             ui.button("E.g: Insert a new row");
@@ -334,7 +287,11 @@ impl View for DBView {
     }
 }
 
-fn table_rows(ui: &mut egui::Ui, meta_columns: &HashMap<String, MetaColumn>, res: &SGDBFetchResult) {
+fn table_rows(
+    ui: &mut egui::Ui,
+    meta_columns: &HashMap<String, MetaColumn>,
+    res: &SGDBFetchResult,
+) {
     use egui_extras::{Size, TableBuilder};
 
     let text_height = egui::TextStyle::Body.resolve(ui.style()).size;
@@ -370,27 +327,9 @@ fn table_rows(ui: &mut egui::Ui, meta_columns: &HashMap<String, MetaColumn>, res
                 for (col, values) in res.data.iter() {
                     let meta_column = meta_columns.get(col.name()).unwrap();
                     table_row.col(|ui| {
-                        meta_column.table_cell(ui,  &values[row_index]);
+                        meta_column.table_cell(ui, &values[row_index]);
                     });
                 }
             });
         });
-}
-
-impl Drop for DBView {
-    fn drop(&mut self) {
-        self.tx.send(Message::Close).unwrap();
-
-        info!("Dropping DB threads..");
-
-        if let Some(handle) = self.handle_db.take() {
-            handle.join().unwrap();
-        }
-
-        if let Some(handle) = self.handle_ui.take() {
-            handle.join().unwrap();
-        }
-
-        info!("DB threads dropped");
-    }
 }

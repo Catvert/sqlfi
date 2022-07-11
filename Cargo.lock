@@ -44,6 +44,7 @@ checksum = "fcb51a0695d8f838b1ee009b3fbf66bda078cd64590202a864a8f3e8c4315c47"
 dependencies = [
  "getrandom",
  "once_cell",
+ "serde",
  "version_check",
 ]
 
@@ -843,6 +844,7 @@ dependencies = [
  "ahash 0.7.6",
  "epaint",
  "nohash-hasher",
+ "serde",
  "tracing",
 ]
 
@@ -895,6 +897,7 @@ version = "0.18.0"
 source = "git+https://github.com/emilk/egui#eeae485629fca24a81a7251739460b671e1420f7"
 dependencies = [
  "bytemuck",
+ "serde",
 ]
 
 [[package]]
@@ -943,6 +946,7 @@ dependencies = [
  "emath",
  "nohash-hasher",
  "parking_lot 0.12.1",
+ "serde",
 ]
 
 [[package]]
@@ -1318,6 +1322,7 @@ checksum = "10a35a97730320ffe8e2d410b5d3b69279b98d2c14bdb8b70ea89ecf7888d41e"
 dependencies = [
  "autocfg",
  "hashbrown 0.12.1",
+ "serde",
 ]
 
 [[package]]
@@ -2510,6 +2515,7 @@ dependencies = [
  "chrono",
  "clap",
  "eframe",
+ "egui",
  "egui_extras",
  "image",
  "indexmap",

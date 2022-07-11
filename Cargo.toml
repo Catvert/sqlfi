@@ -11,10 +11,12 @@ async-trait = "0.1.56"
 bigdecimal = "0.3.0"
 chrono = "0.4.19"
 clap = { version = "3.2.8", features = ["derive"] }
-eframe = { git = "https://github.com/emilk/egui" }
+eframe = { git = "https://github.com/emilk/egui"}
+egui = { git = "https://github.com/emilk/egui", features = ["serde"] }
+
 egui_extras = { git = "https://github.com/emilk/egui", features = [ "image"  ]}
 image = { version = "0.24", default-features = false, features = ["png", "jpeg"] }
-indexmap = { version = "1.9.1", features = ["std"] }
+indexmap = { version = "1.9.1", features = ["std", "serde"] }
 log = "0.4.17"
 poll-promise = { version = "0.1.0", features = ["tokio"] }
 pretty_env_logger = "0.4.0"

@@ -1,10 +1,8 @@
 pub mod sgdb;
 
-use anyhow::{anyhow, Context, Result};
-
-use std::sync::{mpsc::{Receiver, Sender}, Arc};
-
-use self::sgdb::{Connection, SGDBFetchResult, SGDBTable, SGDB};
+use anyhow::{anyhow, Result};
+use std::sync::mpsc::{Receiver, Sender};
+use self::sgdb::{SGDBFetchResult, SGDBTable, SGDB};
 
 #[derive(Debug)]
 pub enum Message<ID> {
@@ -13,6 +11,7 @@ pub enum Message<ID> {
     Close,
 }
 
+#[derive(Debug)]
 pub enum MessageResponse<ID: Copy> {
     FetchAllResult(ID, Result<SGDBFetchResult>),
     TablesResult(Result<Vec<SGDBTable>>),
