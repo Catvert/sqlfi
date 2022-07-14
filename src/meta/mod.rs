@@ -1,10 +1,9 @@
-use std::collections::HashMap;
-
+use egui::{Key, Modifiers};
 use indexmap::IndexMap;
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    db::sgdb::{SGDBColumnType, SGDBFetchResult},
+    db::sgdb::{SGDBColumnType, SGDBRowValue},
     ui::components::icons,
 };
 
@@ -12,11 +11,18 @@ use crate::{
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct MetaQuery {
     icon: String,
-    name: String,
+    pub name: String,
+    pub hotkey: MetaQueryHotKey,
     query_type: MetaQueryType,
-    query: String,
-    params: IndexMap<String, MetaParam>,
+    pub query: String,
+    pub params: IndexMap<String, MetaParam>,
     actions: Vec<MetaAction>
+}
+
+impl MetaQuery {
+    pub fn has_setup(&self) -> bool {
+        !self.params.is_empty()
+    }
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -26,10 +32,8 @@ pub enum MetaQueryType {
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct MetaQueryHotKey {
-    ctrl: bool,
-    alt: bool,
-    shift: bool,
-    key: egui::Key
+    pub modifiers: egui::Modifiers,
+    pub key: egui::Key
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -37,7 +41,7 @@ pub enum MetaAction {
     DoNothing,
     ShowQuery {
         tab: u8,
-        meta_columns: HashMap<String, MetaColumn>
+        meta_columns: Vec<MetaColumn>
     },
     Command {
         command: String
@@ -57,9 +61,9 @@ pub enum CommandPipeMetaQueryResponseType {
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct MetaParam {
-    id: String,
-    r#type: MetaParamType,
-    default: MetaParamTypeDefault
+    pub id: String,
+    pub r#type: MetaParamType,
+    pub default: MetaParamValue
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -68,7 +72,7 @@ pub enum MetaParamType {
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
-pub enum MetaParamTypeDefault {
+pub enum MetaParamValue {
     Text(String), Boolean(bool), Number(i64), Decimal(f64)
 }
 
@@ -76,68 +80,87 @@ impl MetaQuery {
     pub fn from_normal_query(
         name: impl Into<String>,
         query: impl Into<String>,
-        res: &SGDBFetchResult,
+        res: &FetchResult,
     ) -> Self {
-        let columns = res
-            .data
-            .keys()
-            .map(|col| {
-                (
-                    col.name().to_string(),
-                    MetaColumn::default_sgdb_column(col.r#type()),
-                )
-            })
-            .collect();
-
+        let columns = res.res.keys().cloned().collect();
         Self {
             icon: icons::ICON_TABLE.to_string(),
             name: name.into(),
             query: query.into(),
             query_type: MetaQueryType::Global,
             params: IndexMap::new(),
+            hotkey: MetaQueryHotKey { modifiers: Modifiers::CTRL, key: Key::T},
             actions: vec![MetaAction::ShowQuery { tab: 0, meta_columns: columns }],
         }
     }
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone)]
-pub enum MetaColumn {
+#[derive(Serialize, Deserialize, Debug, Clone, Hash, PartialEq, Eq)]
+pub enum ImageType {
+    Url, File
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, Hash, PartialEq, Eq)]
+pub enum MetaColumnType {
     Text { color: Option<(u8, u8, u8)> },
     CheckBox,
     Number { variant: MetaColNumber },
     DateTime { format: String },
+    Image(ImageType),
     Binary,
     Unknown,
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone)]
+#[derive(Serialize, Deserialize, Debug, Clone, Hash, PartialEq, Eq)]
 pub enum MetaColNumber {
     Simple,
     Money,
 }
 
+#[derive(Serialize, Deserialize, Debug, Clone, Hash, PartialEq, Eq)]
+pub struct MetaColumn {
+    pub name: String,
+    pub raw_name: String,
+    pub r#type: MetaColumnType
+}
+
+
 impl MetaColumn {
-    pub fn default_sgdb_column(col_type: SGDBColumnType) -> Self {
-        match col_type {
-            SGDBColumnType::Text => MetaColumn::Text { color: None },
-            SGDBColumnType::Boolean => MetaColumn::CheckBox,
-            SGDBColumnType::Integer => MetaColumn::Number {
+    pub fn default_sgdb_column(raw_name: impl Into<String>, col_type: SGDBColumnType) -> Self {
+
+        let r#type = match col_type {
+            SGDBColumnType::Text => MetaColumnType::Text { color: None },
+            SGDBColumnType::Boolean => MetaColumnType::CheckBox,
+            SGDBColumnType::Integer => MetaColumnType::Number {
                 variant: MetaColNumber::Simple,
             },
-            SGDBColumnType::UInteger => MetaColumn::Number {
+            SGDBColumnType::UInteger => MetaColumnType::Number {
                 variant: MetaColNumber::Simple,
             },
-            SGDBColumnType::Double => MetaColumn::Number {
+            SGDBColumnType::Double => MetaColumnType::Number {
                 variant: MetaColNumber::Simple,
             },
-            SGDBColumnType::Decimal => MetaColumn::Number {
+            SGDBColumnType::Decimal => MetaColumnType::Number {
                 variant: MetaColNumber::Simple,
             },
-            SGDBColumnType::DateTime => MetaColumn::DateTime {
+            SGDBColumnType::DateTime => MetaColumnType::DateTime {
                 format: "%d/%m/%Y %H:%M:%S".to_string(),
             },
-            SGDBColumnType::Binary => MetaColumn::Binary,
-            SGDBColumnType::Unknown => MetaColumn::Unknown,
+            SGDBColumnType::Binary => MetaColumnType::Binary,
+            SGDBColumnType::Unknown => MetaColumnType::Unknown,
+        };
+
+        let raw_name = raw_name.into();
+
+        Self {
+            name: raw_name.clone(),
+            raw_name,
+            r#type
         }
     }
+}
+
+pub struct FetchResult {
+    pub num_rows: usize,
+    pub res: IndexMap<MetaColumn, Vec<SGDBRowValue>>
 }

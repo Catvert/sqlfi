@@ -1,6 +1,26 @@
 use eframe::egui;
 use eframe::egui::text::LayoutJob;
 
+pub fn code_view_ui_read_only(ui: &mut egui::Ui, mut code: &str) {
+    let language = "sql";
+    let theme = CodeTheme::from_memory(ui.ctx());
+
+    let mut layouter = |ui: &egui::Ui, string: &str, _wrap_width: f32| {
+        let layout_job = highlight(ui.ctx(), &theme, string, language);
+        // layout_job.wrap.max_width = wrap_width; // no wrapping
+        ui.fonts().layout_job(layout_job)
+    };
+
+    ui.add(
+        egui::TextEdit::multiline(&mut code)
+            .font(egui::TextStyle::Monospace) // for cursor height
+            .code_editor()
+            .desired_rows(1)
+            .lock_focus(true)
+            .layouter(&mut layouter),
+    );
+}
+
 /// View some code with syntax highlighting and selection.
 pub fn code_view_ui(ui: &mut egui::Ui, code: &mut String) {
     let language = "sql";

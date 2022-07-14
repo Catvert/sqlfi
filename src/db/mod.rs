@@ -1,31 +1,30 @@
 pub mod sgdb;
 
-use anyhow::{anyhow, Result};
-use std::sync::mpsc::{Receiver, Sender};
 use self::sgdb::{SGDBFetchResult, SGDBTable, SGDB};
+use anyhow::{anyhow, Result};
+use flume::{Receiver, Sender};
 
 #[derive(Debug)]
 pub enum Message<ID> {
     FetchTables { schema: String },
-    FetchAll(ID, String),
+    FetchAll(ID, String, Option<Vec<String>>),
     Close,
 }
 
 #[derive(Debug)]
-pub enum MessageResponse<ID: Copy> {
+pub enum MessageResponse<ID: Clone> {
     FetchAllResult(ID, Result<SGDBFetchResult>),
     TablesResult(Result<Vec<SGDBTable>>),
-    Closed,
 }
 
-pub struct SGDBRelay<ID: Copy> {
+pub struct SGDBRelay<ID: Clone> {
     tx: Sender<MessageResponse<ID>>,
     rx: Receiver<Message<ID>>,
 
     sgdb: Box<dyn SGDB>,
 }
 
-impl<ID: Copy> SGDBRelay<ID> {
+impl<ID: Clone> SGDBRelay<ID> {
     pub async fn new(
         sgdb: Box<dyn SGDB>,
         tx: Sender<MessageResponse<ID>>,
@@ -37,12 +36,12 @@ impl<ID: Copy> SGDBRelay<ID> {
     pub async fn run(&mut self) {
         while let Ok(msg) = self.rx.recv() {
             match msg {
-                Message::FetchAll(id, query) => {
+                Message::FetchAll(id, query, params) => {
                     let res = self
                         .sgdb
-                        .fetch_all(&query)
+                        .fetch_all(&query, params)
                         .await
-                        .map(|res| MessageResponse::FetchAllResult(id, Ok(res)))
+                        .map(|res| MessageResponse::FetchAllResult(id.clone(), Ok(res)))
                         .unwrap_or_else(|err| {
                             MessageResponse::FetchAllResult(id, Err(anyhow!("{}", err)))
                         });
@@ -62,7 +61,6 @@ impl<ID: Copy> SGDBRelay<ID> {
                     self.tx.send(res).unwrap();
                 }
                 Message::Close => {
-                    self.tx.send(MessageResponse::Closed).unwrap();
                     break;
                 }
             }

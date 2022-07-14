@@ -1,13 +1,8 @@
 pub mod db_view;
 mod hello_view;
+mod meta_queries_view;
 
-use std::{
-    collections::HashMap,
-    sync::{
-        mpsc::{Receiver, Sender},
-        Arc, Mutex, MutexGuard,
-    },
-};
+use flume::Sender;
 
 use eframe::{
     egui::Frame,
@@ -17,51 +12,9 @@ use eframe::{
 use crate::{
     app::AppData,
     config::ConnectionConfig,
-    db::{
-        sgdb::{SGDBFetchResult, SGDBKind, SGDBTable},
-        Message, MessageResponse,
-    },
-    meta::MetaColumn,
+    db::{sgdb::SGDBKind, Message},
     Sqlife,
 };
-
-use self::db_view::DBViewData;
-
-pub struct ShareDB<T>(Arc<Mutex<T>>);
-
-impl<T> ShareDB<T> {
-    pub fn new(default: T) -> Self {
-        Self(Arc::new(Mutex::new(default)))
-    }
-
-    pub fn duplicate(self) -> (Self, Self) {
-        (self.share(), self)
-    }
-
-    pub fn lock(&self) -> MutexGuard<T> {
-        self.0.lock().unwrap()
-    }
-
-    pub fn set(&self, v: T) {
-        *self.0.lock().unwrap() = v;
-    }
-
-    pub fn share(&self) -> Self {
-        Self(self.0.clone())
-    }
-}
-
-impl<T> Clone for ShareDB<T> {
-    fn clone(&self) -> Self {
-        Self(self.0.clone())
-    }
-}
-
-impl<T: Default> Default for ShareDB<T> {
-    fn default() -> Self {
-        Self(Default::default())
-    }
-}
 
 pub trait QueryShareDB {
     fn query<ID>(&mut self, tx: Sender<Message<ID>>);
@@ -87,53 +40,54 @@ impl<T> QueryState<T> {
     }
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 pub enum MessageID {
     FetchAllResult,
+    MetaQueryResult { meta_query_id: String },
 }
 
 pub enum CurrentView {
     HelloView,
-    DBView(db_view::DBViewData),
-    MetaQueriesView,
+    DBView(db_view::ViewData),
+    MetaQueriesView(meta_queries_view::ViewData),
 }
 
 impl CurrentView {
     pub fn init(&mut self, app_data: &mut AppData) {
         match self {
-            CurrentView::HelloView => hello_view::DataView::from_app(app_data, &mut ()).init(),
-            CurrentView::DBView(view) => db_view::DataView::from_app(app_data, view).init(),
-            CurrentView::MetaQueriesView => todo!(),
+            CurrentView::HelloView => hello_view::HelloView.init(),
+            CurrentView::DBView(data) => db_view::DBView::from_app(app_data, data).init(),
+            CurrentView::MetaQueriesView(data) => {
+                meta_queries_view::MetaQueriesView::from_app(app_data, data).init()
+            }
         };
     }
 
     fn show(&mut self, app_data: &mut AppData, ui: &mut Ui) {
         match self {
-            CurrentView::HelloView => hello_view::DataView::from_app(app_data, &mut ()).show(ui),
-            CurrentView::DBView(view) => db_view::DataView::from_app(app_data, view).show(ui),
-            CurrentView::MetaQueriesView => todo!(),
+            CurrentView::HelloView => hello_view::HelloView.show(ui),
+            CurrentView::DBView(data) => db_view::DBView::from_app(app_data, data).show(ui),
+            CurrentView::MetaQueriesView(data) => {
+                meta_queries_view::MetaQueriesView::from_app(app_data, data).show(ui)
+            }
         };
     }
 
     fn show_appbar(&mut self, app_data: &mut AppData, ui: &mut Ui) {
         match self {
-            CurrentView::HelloView => {
-                hello_view::DataView::from_app(app_data, &mut ()).show_appbar(ui)
+            CurrentView::HelloView => hello_view::HelloView.show_appbar(ui),
+            CurrentView::DBView(view) => db_view::DBView::from_app(app_data, view).show_appbar(ui),
+            CurrentView::MetaQueriesView(data) => {
+                meta_queries_view::MetaQueriesView::from_app(app_data, data).show_appbar(ui)
             }
-            CurrentView::DBView(view) => {
-                db_view::DataView::from_app(app_data, view).show_appbar(ui)
-            }
-            CurrentView::MetaQueriesView => todo!(),
         }
     }
 }
 
-pub trait View<'a, Data: Default> {
-    fn from_app(app_data: &'a mut AppData, data: &'a mut Data) -> Self;
-
+pub trait View {
     fn init(&mut self);
     fn show(&mut self, ui: &mut Ui);
-    fn show_appbar(&mut self, ui: &mut Ui);
+    fn show_appbar(&mut self, ui: &mut Ui) {}
 }
 
 pub fn run(app: &mut Sqlife, ctx: &egui::Context) {
@@ -154,7 +108,10 @@ pub fn run(app: &mut Sqlife, ctx: &egui::Context) {
                             if ui
                                 .radio(app.selected_connection() == Some(i), &con.name)
                                 .clicked()
-                            {}
+                            {
+                                // app.switch_connection::<ConnectionSchema>(con.clone().into());
+                                // app.switch_view(CurrentView::DBView(Default::default()));
+                            }
                         }
 
                         ui.separator();
@@ -168,16 +125,16 @@ pub fn run(app: &mut Sqlife, ctx: &egui::Context) {
                         .selectable_label(matches!(app.view, CurrentView::DBView(_)), "Tables")
                         .clicked()
                     {
-                        app.view = CurrentView::DBView(DBViewData::default());
+                        app.switch_view(CurrentView::DBView(Default::default()));
                     }
                     if ui
                         .selectable_label(
-                            matches!(app.view, CurrentView::MetaQueriesView),
+                            matches!(app.view, CurrentView::MetaQueriesView(_)),
                             "Meta queries",
                         )
                         .clicked()
                     {
-                        app.view = CurrentView::MetaQueriesView;
+                        app.switch_view(CurrentView::MetaQueriesView(Default::default()));
                     }
                     ui.separator();
 
@@ -241,53 +198,6 @@ impl NewConnectionWindow {
             if let Some(true) = close.inner {
                 self.open = false;
             }
-        }
-    }
-}
-
-#[derive(Clone, Default)]
-pub struct DBData {
-    tables: ShareDB<QueryState<Vec<SGDBTable>>>,
-    fetch_result: ShareDB<QueryState<(HashMap<String, MetaColumn>, SGDBFetchResult)>>,
-    backtraces: ShareDB<Vec<String>>,
-}
-
-pub fn process_db_response(rx_db: Receiver<MessageResponse<MessageID>>, ctx: DBData) {
-    while let Ok(msg) = rx_db.recv() {
-        match msg {
-            MessageResponse::FetchAllResult(id, res) => match id {
-                MessageID::FetchAllResult => match res {
-                    Ok(res) => {
-                        let meta_columns = res
-                            .data
-                            .keys()
-                            .map(|col| {
-                                (
-                                    col.name().to_string(),
-                                    MetaColumn::default_sgdb_column(col.r#type()),
-                                )
-                            })
-                            .collect();
-                        ctx.fetch_result
-                            .set(QueryState::Success((meta_columns, res)));
-                    }
-                    Err(err) => {
-                        ctx.fetch_result.set(QueryState::Error(format!("{}", err)));
-
-                        ctx.backtraces.lock().push(format!("{}", err));
-                    }
-                },
-            },
-            MessageResponse::TablesResult(res) => {
-                ctx.tables.set(
-                    res.map(|res| QueryState::Success(res))
-                        .unwrap_or_else(|err| QueryState::Error(format!("{}", err))),
-                );
-            }
-            MessageResponse::Closed => {
-                break;
-            }
-            _ => {}
         }
     }
 }

@@ -15,6 +15,7 @@ eframe = { git = "https://github.com/emilk/egui"}
 egui = { git = "https://github.com/emilk/egui", features = ["serde"] }
 
 egui_extras = { git = "https://github.com/emilk/egui", features = [ "image"  ]}
+flume = "0.10.13"
 image = { version = "0.24", default-features = false, features = ["png", "jpeg"] }
 indexmap = { version = "1.9.1", features = ["std", "serde"] }
 log = "0.4.17"

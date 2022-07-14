@@ -1,15 +1,17 @@
-use std::sync::mpsc::{self, Sender};
 use std::thread::{self, JoinHandle};
 
 use crate::config::ConnectionConfig;
 use crate::db::sgdb::{ConnectionSchema, SGDBBuilder};
-use crate::db::{Message, SGDBRelay};
-use crate::ui::{setup_style, views};
+use crate::db::{Message, SGDBRelay, MessageResponse};
+use crate::meta::MetaQuery;
+use crate::ui::setup_style;
 use eframe::egui;
 use eframe::CreationContext;
+use flume::{Sender, Receiver};
+use indexmap::IndexMap;
 use log::info;
 
-use crate::ui::views::{run, CurrentView, DBData, MessageID, NewConnectionWindow};
+use crate::ui::views::{run, CurrentView, MessageID, NewConnectionWindow};
 
 pub struct AppData {
     selected_connection: Option<usize>,
@@ -21,9 +23,10 @@ pub struct AppData {
 
     pub schema: String,
 
-    pub db_data: DBData,
+    pub meta_queries: IndexMap<String, MetaQuery>,
 
     pub tx_sgdb: Option<Sender<Message<MessageID>>>,
+    pub rx_sgdb: Option<Receiver<MessageResponse<MessageID>>>
 }
 
 pub struct Sqlife {
@@ -35,7 +38,6 @@ impl Sqlife {
     pub fn switch_connection<B: SGDBBuilder + Send + 'static>(
         &mut self,
         builder: B,
-        view: CurrentView,
     ) {
         info!("Switching connection..");
         if let Some(tx_sgdb) = &self.data.tx_sgdb {
@@ -54,8 +56,8 @@ impl Sqlife {
 
         info!("DB threads dropped");
 
-        let (tx_ui, rx_ui) = mpsc::channel();
-        let (tx_db, rx_db) = mpsc::channel();
+        let (tx_ui, rx_ui) = flume::unbounded();
+        let (tx_db, rx_db) = flume::unbounded();
 
         self.data.handle_db = Some(thread::spawn(move || {
             let runtime = tokio::runtime::Builder::new_current_thread()
@@ -71,42 +73,41 @@ impl Sqlife {
             });
         }));
 
-        let db_data = self.data.db_data.clone();
-        self.data.handle_ui = Some(thread::spawn(move || {
-            views::process_db_response(rx_db, db_data);
-        }));
-
         self.data.tx_sgdb = Some(tx_ui);
+        self.data.rx_sgdb = Some(rx_db);
 
+        info!("Changing view done");
+    }
+
+    pub fn switch_view(&mut self, view: CurrentView) {
         self.view = view;
 
         self.view.init(&mut self.data);
-
-        info!("Changing view done");
     }
 
     pub fn new(cc: &CreationContext<'_>, connection: ConnectionConfig) -> Box<Self> {
         setup_style(cc);
         info!("Setup view");
 
-        let view = CurrentView::HelloView;
-
-        let data = AppData {
+        let mut data = AppData {
             handle_db: None,
             handle_ui: None,
             tx_sgdb: None,
-            db_data: DBData::default(),
+            rx_sgdb: None,
             schema: connection.schema.clone(),
             connections: vec![connection.clone()],
             selected_connection: None,
             new_connection_win: NewConnectionWindow::default(),
+            meta_queries: IndexMap::new(),
         };
+
+        let mut view = CurrentView::HelloView;
+        view.init(&mut data);
 
         let mut app = Box::new(Self { data, view });
 
         app.switch_connection::<ConnectionSchema>(
             connection.into(),
-            CurrentView::DBView(views::db_view::DBViewData::default()),
         );
 
         app

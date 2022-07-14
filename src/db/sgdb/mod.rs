@@ -105,7 +105,7 @@ pub struct SGDBTable {
 
 #[async_trait]
 pub trait SGDB: Send + Sync {
-    async fn fetch_all(&self, query: &str) -> Result<SGDBFetchResult>;
+    async fn fetch_all(&self, query: &str, params: Option<Vec<String>>) -> Result<SGDBFetchResult>;
 
     async fn list_tables(&self, schema: &str) -> Result<Vec<SGDBTable>>;
 }

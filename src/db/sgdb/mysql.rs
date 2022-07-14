@@ -93,10 +93,17 @@ fn map_column(col: &MySqlColumn) -> SGDBColumn {
 
 #[async_trait]
 impl SGDB for MySQL {
-    async fn fetch_all(&self, query: &str) -> Result<SGDBFetchResult> {
+    async fn fetch_all(&self, query: &str, params: Option<Vec<String>>) -> Result<SGDBFetchResult> {
         let mut num_rows: usize = 0;
-        let res: IndexMap<SGDBColumn, Vec<SGDBRowValue>> = sqlx::query(query)
-            .fetch_all(&self.pool)
+        let mut res = sqlx::query(query);
+
+        if let Some(params) = params {
+            for param in params {
+                res = res.bind(param);
+            }
+        }
+
+        let res = res.fetch_all(&self.pool)
             .await?
             .into_iter()
             .enumerate()

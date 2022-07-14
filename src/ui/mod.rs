@@ -1,4 +1,3 @@
-pub mod meta;
 pub mod views;
 pub mod components;
 
@@ -44,6 +43,9 @@ pub fn setup_style(cc: &CreationContext<'_>) {
     visuals.widgets.inactive.bg_fill = Color32::from_rgb(40, 44, 52);
     visuals.widgets.active.bg_fill = Color32::from_rgb(97, 175, 239);
     visuals.widgets.noninteractive.fg_stroke = Stroke::new(1., Color32::from_rgb(255, 255, 255));
+
+    visuals.widgets.hovered.bg_fill = Color32::from_rgb(40, 44, 52);
+    visuals.widgets.hovered.bg_stroke = Stroke::new(1., Color32::from_rgb(97, 175, 239));
 
     visuals.selection.bg_fill = Color32::from_rgb(40, 44, 52);
     visuals.selection.stroke = Stroke::new(1., Color32::from_rgb(97, 175, 239));

@@ -1,13 +1,52 @@
-use eframe::{
-    egui::{Layout, Ui},
-    emath::Align,
-    epaint::Color32,
-};
+use egui::{RichText, Ui};
 
-use crate::{
-    db::sgdb::SGDBRowValue,
-    meta::{MetaColNumber, MetaColumn},
-};
+use crate::meta::{MetaColNumber, MetaColumnType, FetchResult};
+use crate::ui::components::icons;
+use crate::{db::sgdb::SGDBRowValue, meta::MetaColumn};
+
+use eframe::{egui::Layout, emath::Align, epaint::Color32};
+
+pub fn meta_table(ui: &mut egui::Ui, res: &FetchResult) {
+    use egui_extras::{Size, TableBuilder};
+
+    let text_height = egui::TextStyle::Body.resolve(ui.style()).size;
+
+    TableBuilder::new(ui)
+        .striped(true)
+        .cell_layout(egui::Layout::left_to_right().with_cross_align(egui::Align::Center))
+        .column(Size::initial(20.))
+        .columns(Size::remainder().at_least(100.), res.res.len())
+        .resizable(true)
+        .header(20.0, |mut header| {
+            header.col(|ui| {
+                ui.with_layout(Layout::top_down(Align::Center), |ui| {
+                    let rich = RichText::new("Actions").underline();
+                    ui.label(rich);
+                });
+            });
+            for col in res.res.keys() {
+                header.col(|ui| {
+                    ui.with_layout(Layout::top_down(Align::Center), |ui| {
+                        let rich = RichText::new(&col.name).underline();
+                        ui.label(rich);
+                    });
+                });
+            }
+        })
+        .body(|mut body| {
+            body.rows(25.0, res.num_rows, |row_index, mut table_row| {
+                table_row.col(|ui| {
+                    ui.button(icons::ICON_EDIT);
+                });
+
+                for (col, values) in res.res.iter() {
+                    table_row.col(|ui| {
+                        col.table_cell(ui, &values[row_index]);
+                    });
+                }
+            });
+        });
+}
 
 pub trait MetaTableCell {
     fn table_cell(&self, ui: &mut Ui, field: &SGDBRowValue);
@@ -28,8 +67,8 @@ impl MetaTableCell for MetaColumn {
                 ui.colored_label(Color32::LIGHT_BLUE, "null");
             });
         } else {
-            match self {
-                MetaColumn::Text { color } => {
+            match &self.r#type {
+                MetaColumnType::Text { color } => {
                     ui.with_layout(Layout::left_to_right(), |ui| {
                         if let SGDBRowValue::Text(text) = field {
                             ui.label(text);
@@ -38,7 +77,7 @@ impl MetaTableCell for MetaColumn {
                         }
                     });
                 }
-                MetaColumn::CheckBox => {
+                MetaColumnType::CheckBox => {
                     ui.with_layout(Layout::top_down(Align::Center), |ui| {
                         if let SGDBRowValue::Boolean(v) = field {
                             ui.checkbox(&mut v.clone(), "");
@@ -47,7 +86,7 @@ impl MetaTableCell for MetaColumn {
                         }
                     });
                 }
-                MetaColumn::Number { variant } => {
+                MetaColumnType::Number { variant } => {
                     ui.with_layout(Layout::top_down(Align::Center), |ui| {
                         if let SGDBRowValue::Integer(v) = field {
                             match variant {
@@ -74,15 +113,16 @@ impl MetaTableCell for MetaColumn {
                         }
                     });
                 }
-                MetaColumn::DateTime { format } => {
+                MetaColumnType::DateTime { format } => {
                     if let SGDBRowValue::DateTime(v) = field {
                         ui.label(v.format(format).to_string());
                     } else {
                         invalid_type(ui);
                     }
                 }
-                MetaColumn::Binary => todo!(),
-                MetaColumn::Unknown => {
+                MetaColumnType::Image(image_type) => todo!(),
+                MetaColumnType::Binary => todo!(),
+                MetaColumnType::Unknown => {
                     ui.colored_label(Color32::RED, "Unknown type");
                 }
             }
