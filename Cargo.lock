@@ -2559,7 +2559,18 @@ dependencies = [
 ]
 
 [[package]]
-name = "sqlfi"
+name = "sqlformat"
+version = "0.1.8"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b4b7922be017ee70900be125523f38bdd644f4f06a1b16e8fa5a8ee8c34bffd4"
+dependencies = [
+ "itertools",
+ "nom",
+ "unicode_categories",
+]
+
+[[package]]
+name = "sqlife"
 version = "0.1.0"
 dependencies = [
  "anyhow",
@@ -2581,17 +2592,6 @@ dependencies = [
  "syntect",
  "tokio",
  "toml",
-]
-
-[[package]]
-name = "sqlformat"
-version = "0.1.8"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b4b7922be017ee70900be125523f38bdd644f4f06a1b16e8fa5a8ee8c34bffd4"
-dependencies = [
- "itertools",
- "nom",
- "unicode_categories",
 ]
 
 [[package]]

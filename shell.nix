@@ -1,7 +1,7 @@
 with import <nixpkgs> { };
 
 stdenv.mkDerivation rec {
-  name = "sqlfi-env";
+  name = "sqlife-env";
   buildInputs = [
     libxkbcommon
     libGL

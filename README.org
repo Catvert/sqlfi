@@ -1,4 +1,4 @@
-* SQLFI
+* Sqlife
 
 ** Roadmap
 *** TODO Meta-queries

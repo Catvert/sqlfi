@@ -56,7 +56,7 @@ fn main() {
     );
 
     eframe::run_native(
-        "sqlfi",
+        "sqlife",
         options,
         Box::new(|cc| Sqlife::new(cc, connection)),
     );
