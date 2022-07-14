@@ -1,0 +1,5 @@
+* SQLFI
+
+** Roadmap
+*** TODO Meta-queries
+*** TODO View table structure
