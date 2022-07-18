@@ -5,15 +5,16 @@ use eframe::{
     emath::Align,
     epaint::Color32,
 };
-use egui::Window;
+use egui::{vec2, Align2, Window};
 use indexmap::IndexMap;
 use serde::{Deserialize, Serialize};
 
 use crate::{
     app::AppData,
+    config::{ConnectionConfig, SqlifeConfig},
     db::{Message, MessageResponse},
     meta::{FetchResult, MetaColumn, MetaParam, MetaParamType, MetaParamValue, MetaQuery},
-    ui::components::{self, icons, meta_table, sql_editor},
+    ui::components::{self, icons, meta_grid, meta_table, sql_editor},
 };
 
 use super::{MessageID, QueryState, View};
@@ -33,11 +34,10 @@ pub struct ViewData {
     query_history: Vec<String>,
     query: String,
 
-    #[serde(skip)]
-    execute_window: Option<ExecuteMetaQueryWindow>,
+    selected_index: usize,
 
     #[serde(skip)]
-    edit_window: Option<EditMetaQueryWindow>,
+    right_panel: Option<RightPanel>,
 
     #[serde(skip)]
     fetch_result: QueryState<FetchResult>,
@@ -51,34 +51,42 @@ impl Default for ViewData {
             bottom_tab: BottomTab::Query,
             query_history: vec![],
             query: String::new(),
-            execute_window: None,
-            edit_window: None,
             fetch_result: QueryState::Ready,
+            right_panel: None,
+            selected_index: 0,
         }
     }
+}
+
+pub enum RightPanel {
+    EditMetaQuery(EditMetaQuery),
+    ExecuteMetaQuery(ExecuteMetaQuery),
 }
 
 pub struct MetaQueriesView<'a> {
     pub rx: &'a Receiver<MessageResponse<MessageID>>,
     pub tx: &'a Sender<Message<MessageID>>,
 
-    pub meta_queries: &'a mut IndexMap<String, MetaQuery>,
-
-    pub schema: &'a str,
+    pub config: &'a mut SqlifeConfig,
+    pub current_connection: Option<usize>,
 
     pub data: &'a mut ViewData,
 }
 
 impl<'a> MetaQueriesView<'a> {
-    pub fn from_app(app: &'a mut AppData, data: &'a mut ViewData) -> Self {
+    pub fn from_app(
+        app: &'a mut AppData,
+        data: &'a mut ViewData,
+        config: &'a mut SqlifeConfig,
+    ) -> Self {
         MetaQueriesView {
-            meta_queries: &mut app.meta_queries,
-
             data,
 
-            schema: &app.schema,
+            config,
+
             rx: app.rx_sgdb.as_ref().unwrap(),
             tx: app.tx_sgdb.as_ref().unwrap(),
+            current_connection: app.current_connection,
         }
     }
 
@@ -95,25 +103,91 @@ impl<'a> MetaQueriesView<'a> {
                 ui.separator();
                 ScrollArea::both().show(ui, |ui| {
                     ui.vertical(|ui| {
-                        for (query_id, query) in self.meta_queries.iter() {
+                        let con = &mut self.config.connections[self.current_connection.unwrap()];
+
+                        for (query_id, query) in con.meta_queries.iter() {
                             ui.with_layout(Layout::top_down_justified(Align::Min), |ui| {
                                 let btn = ui.button(&format!("{} {}", icons::ICON_RUN, query.name));
 
                                 if btn.clicked() {
-                                    self.data.execute_window =
-                                        Some(ExecuteMetaQueryWindow::new(query.clone()));
+                                    self.data.right_panel = Some(RightPanel::ExecuteMetaQuery(
+                                        ExecuteMetaQuery::new(query.clone()),
+                                    ));
                                 }
 
                                 if btn.clicked_by(egui::PointerButton::Secondary) {
-                                    self.data.edit_window = Some(EditMetaQueryWindow::new(
-                                        query_id.clone(),
-                                        query.clone(),
+                                    self.data.right_panel = Some(RightPanel::EditMetaQuery(
+                                        EditMetaQuery::new(query_id.clone(), query.clone()),
                                     ));
                                 }
                             });
                         }
                     });
                 });
+            });
+    }
+
+    fn show_right_panel(&mut self, ui: &mut Ui) {
+        egui::SidePanel::right("right_panel")
+            .resizable(true)
+            .default_width(300.)
+            .max_width(400.)
+            .show_inside(ui, |ui| {
+                let mut close = false;
+                ui.horizontal(|ui| {
+                    ui.heading("Execute {}");
+                    ui.with_layout(Layout::right_to_left(), |ui| {
+                        if ui.button(icons::ICON_CLOSE).clicked() {
+                            close = true;
+                        }
+                    });
+                });
+
+                ui.separator();
+                ScrollArea::both().show(ui, |ui| {
+                    if let Some(right_panel) = &mut self.data.right_panel {
+                        match right_panel {
+                            RightPanel::EditMetaQuery(q) => {
+                                let exec = q.show(ui);
+                                if exec {
+                                    let con = &mut self.config.connections
+                                        [self.current_connection.unwrap()];
+                                    close = true;
+                                    *con.meta_queries.get_mut(&q.key).unwrap() = q.meta_query.clone();
+                                }
+                            }
+                            RightPanel::ExecuteMetaQuery(q) => {
+                                let exec = q.show(ui);
+
+                                if exec {
+                                    let params = q
+                                        .params_values
+                                        .iter()
+                                        .map(|(key, (param, value))| match value {
+                                            MetaParamValue::Text(t) => t.clone(),
+                                            MetaParamValue::Boolean(_) => todo!(),
+                                            MetaParamValue::Number(_) => todo!(),
+                                            MetaParamValue::Decimal(_) => todo!(),
+                                        })
+                                        .collect();
+
+                                    self.tx
+                                        .send(Message::FetchAll(
+                                            MessageID::FetchAllResult,
+                                            q.meta_query.query.clone(),
+                                            Some(params),
+                                        ))
+                                        .unwrap();
+                                    close = true;
+                                }
+                            }
+                        }
+                    }
+                });
+
+                if close {
+                    self.data.right_panel.take();
+                }
             });
     }
 
@@ -198,7 +272,7 @@ impl<'a> MetaQueriesView<'a> {
                 egui::ScrollArea::both().show(ui, |ui| {
                     match &self.data.fetch_result {
                         QueryState::Success(meta) => {
-                            meta_table::meta_table(ui, meta);
+                            meta_grid::meta_grid(ui, meta, &mut self.data.selected_index);
                         }
                         QueryState::Waiting => {
                             ui.colored_label(Color32::BLUE, "Loading..");
@@ -250,9 +324,13 @@ impl<'a> MetaQueriesView<'a> {
 
     pub fn process_keybindings(&mut self, ui: &mut Ui) {
         let mut input = ui.input_mut();
-        for (id, query) in self.meta_queries.iter() {
+
+        let con = &mut self.config.connections[self.current_connection.unwrap()];
+        for (id, query) in con.meta_queries.iter() {
             if input.consume_key(query.hotkey.modifiers, query.hotkey.key) {
-                self.data.execute_window = Some(ExecuteMetaQueryWindow::new(query.clone()));
+                self.data.right_panel = Some(RightPanel::ExecuteMetaQuery(ExecuteMetaQuery::new(
+                    query.clone(),
+                )));
             }
         }
     }
@@ -284,63 +362,8 @@ impl<'a> View for MetaQueriesView<'a> {
 
         self.show_central_panel(ui);
 
-        let close = if let Some(window) = &mut self.data.execute_window {
-            let mut open = true;
-            if window.show(&mut open, ui) {
-                let params = window
-                    .params_values
-                    .iter()
-                    .map(|(key, (param, value))| match value {
-                        MetaParamValue::Text(t) => t.clone(),
-                        MetaParamValue::Boolean(_) => todo!(),
-                        MetaParamValue::Number(_) => todo!(),
-                        MetaParamValue::Decimal(_) => todo!(),
-                    })
-                    .collect();
-
-                self.tx
-                    .send(Message::FetchAll(
-                        MessageID::FetchAllResult,
-                        window.meta_query.query.clone(),
-                        Some(params),
-                    ))
-                    .unwrap();
-                open = false;
-            }
-            !open
-        } else {
-            false
-        };
-
-        if close {
-            self.data.execute_window.take();
-        }
-
-        let action = if let Some(window) = &mut self.data.edit_window {
-            let mut open = true;
-            let mut action = WindowAction::Continue;
-            if window.show(&mut open, ui) {
-                action = WindowAction::Execute;
-            }
-
-            if !open {
-                action = WindowAction::Close;
-            }
-            action
-        } else {
-            WindowAction::Continue
-        };
-
-        match action {
-            WindowAction::Continue => {}
-            WindowAction::Close => {
-                self.data.edit_window.take();
-            }
-            WindowAction::Execute => {
-                let EditMetaQueryWindow { key, meta_query } = self.data.edit_window.take().unwrap();
-
-                *self.meta_queries.get_mut(&key).unwrap() = meta_query;
-            }
+        if self.data.right_panel.is_some() {
+            self.show_right_panel(ui);
         }
     }
 
@@ -359,80 +382,70 @@ impl<'a> View for MetaQueriesView<'a> {
     }
 }
 
-pub struct EditMetaQueryWindow {
+pub struct EditMetaQuery {
     meta_query: MetaQuery,
     key: String,
 }
 
-impl EditMetaQueryWindow {
+impl EditMetaQuery {
     fn new(key: String, meta_query: MetaQuery) -> Self {
         Self { key, meta_query }
     }
 }
 
-impl EditMetaQueryWindow {
-    pub fn show(&mut self, open: &mut bool, ui: &mut Ui) -> bool {
-        let submitted = Window::new(format!("Execute {}", self.meta_query.name))
-            .open(open)
-            .resizable(false)
-            .show(ui.ctx(), |ui| {
-                let mut submitted = false;
-                egui::Grid::new("my_grid")
-                    .num_columns(2)
-                    .spacing([40.0, 4.0])
-                    .striped(false)
-                    .show(ui, |ui| {
-                        for (id, param) in self.meta_query.params.iter_mut() {
-                            ui.label(id);
-                            match &mut param.default {
-                                MetaParamValue::Text(text) => {
-                                    ui.text_edit_singleline(text);
-                                }
-                                MetaParamValue::Boolean(_) => todo!(),
-                                MetaParamValue::Number(_) => todo!(),
-                                MetaParamValue::Decimal(_) => todo!(),
-                            }
+impl EditMetaQuery {
+    pub fn show(&mut self, ui: &mut Ui) -> bool {
+        let mut submitted = false;
+        egui::Grid::new("my_grid")
+            .num_columns(2)
+            .spacing([40.0, 4.0])
+            .striped(false)
+            .show(ui, |ui| {
+                for (id, param) in self.meta_query.params.iter_mut() {
+                    ui.label(id);
+                    match &mut param.default {
+                        MetaParamValue::Text(text) => {
+                            ui.text_edit_singleline(text);
                         }
-                    });
-
-                ui.separator();
-
-                components::sql_editor::code_view_ui(ui, &mut self.meta_query.query);
-
-                ui.separator();
-                ui.with_layout(Layout::top_down(eframe::emath::Align::Max), |ui| {
-                    if ui.button("Add param").clicked() {
-                        self.meta_query.params.insert(
-                            "test".into(),
-                            MetaParam {
-                                id: "hello".into(),
-                                r#type: MetaParamType::Text,
-                                default: MetaParamValue::Text("hello".into()),
-                            },
-                        );
+                        MetaParamValue::Boolean(_) => todo!(),
+                        MetaParamValue::Number(_) => todo!(),
+                        MetaParamValue::Decimal(_) => todo!(),
                     }
-                    if ui.button("Save").clicked() {
-                        submitted = true;
-                    }
-                });
-
-                submitted
+                }
             });
 
-        return if let Some(submitted) = submitted {
-            Some(true) == submitted.inner
-        } else {
-            false
-        };
+        ui.separator();
+
+        components::sql_editor::code_view_ui(ui, &mut self.meta_query.query);
+
+        ui.separator();
+        ui.with_layout(Layout::top_down(eframe::emath::Align::Max), |ui| {
+            if ui.button("Add param").clicked() {
+                self.meta_query.params.insert(
+                    "test".into(),
+                    MetaParam {
+                        id: "hello".into(),
+                        r#type: MetaParamType::Text,
+                        default: MetaParamValue::Text("hello".into()),
+                    },
+                );
+            }
+            if ui.button("Save").clicked() {
+                submitted = true;
+            }
+        });
+
+        submitted
     }
 }
 
-pub struct ExecuteMetaQueryWindow {
+pub struct ExecuteMetaQuery {
+    request_focus: bool,
     meta_query: MetaQuery,
     params_values: IndexMap<String, (MetaParam, MetaParamValue)>,
 }
 
-impl ExecuteMetaQueryWindow {
+impl ExecuteMetaQuery {
     fn new(meta_query: MetaQuery) -> Self {
         let mut params_values = meta_query
             .params
@@ -441,59 +454,59 @@ impl ExecuteMetaQueryWindow {
             .collect();
 
         Self {
+            request_focus: true,
             meta_query,
             params_values,
         }
     }
 }
 
-impl ExecuteMetaQueryWindow {
-    pub fn show(&mut self, open: &mut bool, ui: &mut Ui) -> bool {
-        let submitted = Window::new(format!("Execute {}", self.meta_query.name))
-            .open(open)
-            .resizable(false)
-            .show(ui.ctx(), |ui| {
-                let mut submitted = false;
-                if self.params_values.is_empty() {
-                    ui.label("No parameters");
-                } else {
-                    egui::Grid::new("my_grid")
-                        .num_columns(2)
-                        .spacing([40.0, 4.0])
-                        .striped(false)
-                        .show(ui, |ui| {
-                            // ui.label("Name:").on_hover_text("The connection name.");
-                            // ui.text_edit_singleline(&mut self.name);
-                            // ui.end_row();
+impl ExecuteMetaQuery {
+    pub fn show(&mut self, ui: &mut Ui) -> bool {
+        let mut submitted = false;
+        if self.params_values.is_empty() {
+            ui.label("No parameters");
+        } else {
+            egui::Grid::new("my_grid")
+                .num_columns(2)
+                .spacing([40.0, 4.0])
+                .striped(false)
+                .show(ui, |ui| {
+                    for (index, (id, param)) in self.params_values.iter_mut().enumerate() {
+                        ui.label(id);
+                        let res = match &mut param.1 {
+                            MetaParamValue::Text(text) => ui.text_edit_singleline(text),
+                            MetaParamValue::Boolean(_) => todo!(),
+                            MetaParamValue::Number(_) => todo!(),
+                            MetaParamValue::Decimal(_) => todo!(),
+                        };
 
-                            // ui.label("Connection string:").on_hover_text("The connection string to the database. E.g: 'mysql://{user}:{pwd}@localhost'");
-                            // ui.text_edit_singleline(&mut self.uri);
-                            // ui.end_row();
-
-                            // ui.label("Database:").on_hover_text("The database to connect to.");
-                            // ui.text_edit_singleline(&mut self.schema);
-                            // ui.end_row();
-                        });
-                }
-
-                ui.separator();
-
-                components::sql_editor::code_view_ui_read_only(ui, &self.meta_query.query);
-
-                ui.separator();
-                ui.with_layout(Layout::top_down(eframe::emath::Align::Max), |ui| {
-                    if ui.button("Execute").clicked() {
-                        submitted = true;
+                        if self.request_focus {
+                            res.request_focus();
+                            self.request_focus = false;
+                        }
+                        ui.end_row();
                     }
                 });
+        }
 
-                submitted
-            });
+        ui.separator();
 
-        return if let Some(submitted) = submitted {
-            Some(true) == submitted.inner
-        } else {
-            false
-        };
+        components::sql_editor::code_view_ui_read_only(ui, &self.meta_query.query);
+
+        ui.separator();
+        ui.with_layout(Layout::top_down(eframe::emath::Align::Max), |ui| {
+            let btn = ui.button("Execute");
+
+            if self.request_focus {
+                btn.request_focus();
+                self.request_focus = false;
+            }
+            if btn.clicked() {
+                submitted = true;
+            }
+        });
+
+        submitted
     }
 }

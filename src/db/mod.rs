@@ -6,7 +6,7 @@ use flume::{Receiver, Sender};
 
 #[derive(Debug)]
 pub enum Message<ID> {
-    FetchTables { schema: String },
+    FetchTables,
     FetchAll(ID, String, Option<Vec<String>>),
     Close,
 }
@@ -48,10 +48,10 @@ impl<ID: Clone> SGDBRelay<ID> {
 
                     self.tx.send(res).unwrap();
                 }
-                Message::FetchTables { schema } => {
+                Message::FetchTables => {
                     let res = self
                         .sgdb
-                        .list_tables(&schema)
+                        .list_tables()
                         .await
                         .map(|res| MessageResponse::TablesResult(Ok(res)))
                         .unwrap_or_else(|err| {

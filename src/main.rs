@@ -7,7 +7,7 @@ mod meta;
 mod ui;
 
 use app::Sqlife;
-use config::ConnectionConfig;
+use config::{ConnectionConfig, SqlifeConfig};
 use db::sgdb::SGDBKind;
 
 use clap::{ArgEnum, Parser};
@@ -32,13 +32,7 @@ impl Into<SGDBKind> for SGDBKindArgs {
 #[derive(Parser, Debug)]
 #[clap(author, version, about, long_about = None)]
 struct Args {
-    /// Name of the person to greet
-    #[clap(short, long, value_parser)]
-    uri: Option<String>,
-    #[clap(short, long, value_parser)]
-    schema: Option<String>,
-    #[clap(short, long, arg_enum, value_parser)]
-    kind: Option<SGDBKindArgs>,
+    connection_index: Option<usize>
 }
 
 fn main() {
@@ -48,16 +42,11 @@ fn main() {
 
     let options = eframe::NativeOptions::default();
 
-    let connection = ConnectionConfig::new(
-        "default",
-        args.kind.unwrap().into(),
-        args.uri.unwrap(),
-        args.schema.unwrap(),
-    );
+    let config = SqlifeConfig::load().unwrap_or_default();
 
     eframe::run_native(
         "sqlife",
         options,
-        Box::new(|cc| Sqlife::new(cc, connection)),
+        Box::new(move |cc| Sqlife::new(cc, config, args.connection_index)),
     );
 }

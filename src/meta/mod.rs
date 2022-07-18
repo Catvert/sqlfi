@@ -15,8 +15,8 @@ pub struct MetaQuery {
     pub hotkey: MetaQueryHotKey,
     query_type: MetaQueryType,
     pub query: String,
+    actions: Vec<MetaAction>,
     pub params: IndexMap<String, MetaParam>,
-    actions: Vec<MetaAction>
 }
 
 impl MetaQuery {

@@ -9,10 +9,10 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     app::AppData,
-    meta::{MetaColumn, MetaQuery, FetchResult}, ui::components::{icons, sql_editor, meta_table},
+    meta::{MetaColumn, MetaQuery, FetchResult}, ui::components::{icons, sql_editor, meta_table}, config::{SqlifeConfig, ConnectionConfig},
 };
 use crate::db::{
-        sgdb::SGDBTable,
+    sgdb::SGDBTable,
         Message, MessageResponse,
     };
 
@@ -58,20 +58,22 @@ pub struct DBView<'a> {
     pub tx: &'a Sender<Message<MessageID>>,
     pub rx: &'a Receiver<MessageResponse<MessageID>>,
 
-    pub meta_queries: &'a mut IndexMap<String, MetaQuery>,
-    pub schema: &'a str,
+    pub current_connection: Option<usize>,
+
+    pub config: &'a mut SqlifeConfig,
 
     pub data: &'a mut ViewData,
 }
 
 impl<'a> DBView<'a> {
-    pub fn from_app(app: &'a mut AppData, data: &'a mut ViewData) -> Self {
+    pub fn build(app: &'a mut AppData, data: &'a mut ViewData, config: &'a mut SqlifeConfig) -> Self {
         DBView {
-            meta_queries: &mut app.meta_queries,
+            config,
 
             data,
 
-            schema: &app.schema,
+            current_connection: app.current_connection,
+
             rx: app.rx_sgdb.as_ref().unwrap(),
             tx: app.tx_sgdb.as_ref().unwrap(),
         }
@@ -89,15 +91,9 @@ impl<'a> DBView<'a> {
                         if ui.button(icons::ICON_REFRESH).clicked() {
                             self.data.tables.query(
                                 self.tx,
-                                Message::FetchTables {
-                                    schema: self.schema.to_string(),
-                                },
+                                Message::FetchTables,
                             );
                         }
-
-                        // ui.menu_button(&self.schema, |ui| {
-                        //     ui.radio(true, &self.schema);
-                        // });
                     });
                 });
 
@@ -192,7 +188,8 @@ impl<'a> DBView<'a> {
 
                             if let QueryState::Success(res) = &self.data.fetch_result {
                                 if ui.button(icons::ICON_ARROW_DOWN).clicked() {
-                                    self.meta_queries.insert(
+                                    let con = &mut self.config.connections[self.current_connection.unwrap()];
+                                    con.meta_queries.insert(
                                         "test".into(),
                                         MetaQuery::from_normal_query(
                                             "Test",
@@ -296,9 +293,7 @@ impl<'a> View for DBView<'a> {
     fn init(&mut self) {
         self.data.tables.query(
             self.tx,
-            Message::FetchTables {
-                schema: self.schema.to_string(),
-            },
+            Message::FetchTables,
         );
     }
 

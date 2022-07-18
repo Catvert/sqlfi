@@ -10,78 +10,27 @@ use indexmap::IndexMap;
 use serde::{Deserialize, Serialize};
 use sqlx::types::BigDecimal;
 
-#[async_trait]
-pub trait SGDBBuilder {
-    async fn acquire_sgdb(&self) -> Result<Box<dyn SGDB>>;
-}
-
 pub struct Connection {
     kind: SGDBKind,
     uri: String,
-}
-
-impl Connection {
-    pub fn new(kind: SGDBKind, uri: impl Into<String>) -> Self {
-        let uri = uri.into();
-        Connection { uri, kind }
-    }
-
-    pub fn into_connection_schema(self, schema: impl Into<String>) -> ConnectionSchema {
-        ConnectionSchema::new(self, schema.into())
-    }
-
-    pub async fn databases(&self) -> Result<Vec<String>> {
-        match self.kind {
-            SGDBKind::Mysql => {
-                mysql::MySQL::connect(&self.uri)
-                    .await?
-                    .list_databases()
-                    .await
-            }
-            SGDBKind::Postgres => todo!(),
-            SGDBKind::Sqlite => todo!(),
-        }
-    }
-}
-
-#[async_trait]
-impl SGDBBuilder for Connection {
-    async fn acquire_sgdb(&self) -> Result<Box<dyn SGDB>> {
-        Ok(match self.kind {
-            SGDBKind::Mysql => {
-                let sgdb = mysql::MySQL::connect(&self.uri).await?;
-
-                Box::new(sgdb) as Box<dyn SGDB>
-            }
-            SGDBKind::Postgres => todo!(),
-            SGDBKind::Sqlite => todo!(),
-        })
-    }
-}
-
-pub struct ConnectionSchema {
-    connection: Connection,
     schema: String,
 }
 
-impl ConnectionSchema {
-    pub fn new(connection: Connection, schema: String) -> Self {
-        ConnectionSchema { connection, schema }
+impl Connection {
+    pub fn new(kind: SGDBKind, uri: String, schema: String) -> Self {
+        Connection { kind, uri, schema }
     }
 
     pub fn schema(&self) -> &str {
         &self.schema
     }
-}
 
-#[async_trait]
-impl SGDBBuilder for ConnectionSchema {
-    async fn acquire_sgdb(&self) -> Result<Box<dyn SGDB>> {
-        Ok(match self.connection.kind {
+    pub async fn acquire_sgdb(&self) -> Result<Box<dyn SGDB>> {
+        Ok(match self.kind {
             SGDBKind::Mysql => {
                 let sgdb =
-                    mysql::MySQL::connect(&format!("{}/{}", self.connection.uri, self.schema))
-                        .await?;
+                    mysql::MySQL::connect(&self.uri, &self.schema)
+                    .await?;
 
                 Box::new(sgdb) as Box<dyn SGDB>
             }
@@ -90,6 +39,7 @@ impl SGDBBuilder for ConnectionSchema {
         })
     }
 }
+
 
 #[derive(Debug)]
 pub struct SGDBTable {
@@ -107,7 +57,7 @@ pub struct SGDBTable {
 pub trait SGDB: Send + Sync {
     async fn fetch_all(&self, query: &str, params: Option<Vec<String>>) -> Result<SGDBFetchResult>;
 
-    async fn list_tables(&self, schema: &str) -> Result<Vec<SGDBTable>>;
+    async fn list_tables(&self) -> Result<Vec<SGDBTable>>;
 }
 
 #[derive(Default, Serialize, Deserialize, Clone, Copy)]

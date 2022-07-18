@@ -12,12 +12,14 @@ use super::{SGDBColumn, SGDBColumnType, SGDBFetchResult, SGDBRowValue, SGDBTable
 
 pub struct MySQL {
     pool: MySqlPool,
+    schema: String
 }
 
 impl MySQL {
-    pub async fn connect(uri: &str) -> Result<Self> {
-        let pool = MySqlPool::connect(uri).await?;
-        Ok(MySQL { pool })
+    pub async fn connect(uri: &str,  schema: impl Into<String>) -> Result<Self> {
+        let schema = schema.into();
+        let pool = MySqlPool::connect(&format!("{}/{}", uri, schema)).await?;
+        Ok(MySQL { pool, schema })
     }
 
     pub async fn list_databases(&self) -> Result<Vec<String>> {
@@ -133,24 +135,24 @@ impl SGDB for MySQL {
         })
     }
 
-    async fn list_tables(&self, schema: &str) -> Result<Vec<super::SGDBTable>> {
+    async fn list_tables(&self) -> Result<Vec<super::SGDBTable>> {
         let tables = sqlx::query(
             "SELECT table_name, table_type, engine, version, table_rows, create_time FROM INFORMATION_SCHEMA.TABLES WHERE table_schema = ?",
         )
-        .bind(&schema)
-        .map(|row: MySqlRow| {
-            let table_name = row.get("table_name");
-            let full_path = format!("{}.{}", &schema, table_name);
-            SGDBTable {
-                table_name,
-                table_type: row.get("table_type"),
-                full_path,
-                schema: schema.to_string(),
-                engine: row.get("engine"),
-                table_rows: row.get("table_rows"),
-                // create_time: row.get("create_time"),
-            }
-        })
+            .bind(&self.schema)
+            .map(|row: MySqlRow| {
+                let table_name = row.get("table_name");
+                let full_path = format!("{}.{}", &self.schema, table_name);
+                SGDBTable {
+                    table_name,
+                    table_type: row.get("table_type"),
+                    full_path,
+                    schema: self.schema.clone(),
+                    engine: row.get("engine"),
+                    table_rows: row.get("table_rows"),
+                    // create_time: row.get("create_time"),
+                }
+})
         .fetch_all(&self.pool)
         .await?;
 

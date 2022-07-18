@@ -69,25 +69,25 @@ impl MetaTableCell for MetaColumn {
         } else {
             match &self.r#type {
                 MetaColumnType::Text { color } => {
-                    ui.with_layout(Layout::left_to_right(), |ui| {
+                    // ui.with_layout(Layout::left_to_right(), |ui| {
                         if let SGDBRowValue::Text(text) = field {
                             ui.label(text);
                         } else {
                             invalid_type(ui);
                         }
-                    });
+                    // });
                 }
                 MetaColumnType::CheckBox => {
-                    ui.with_layout(Layout::top_down(Align::Center), |ui| {
+                    // ui.with_layout(Layout::top_down(Align::Center), |ui| {
                         if let SGDBRowValue::Boolean(v) = field {
                             ui.checkbox(&mut v.clone(), "");
                         } else {
                             invalid_type(ui);
                         }
-                    });
+                    // });
                 }
                 MetaColumnType::Number { variant } => {
-                    ui.with_layout(Layout::top_down(Align::Center), |ui| {
+                    // ui.with_layout(Layout::top_down(Align::Center), |ui| {
                         if let SGDBRowValue::Integer(v) = field {
                             match variant {
                                 MetaColNumber::Simple => ui.label(v.to_string()),
@@ -111,7 +111,7 @@ impl MetaTableCell for MetaColumn {
                         } else {
                             invalid_type(ui);
                         }
-                    });
+                    // });
                 }
                 MetaColumnType::DateTime { format } => {
                     if let SGDBRowValue::DateTime(v) = field {

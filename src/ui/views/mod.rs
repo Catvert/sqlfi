@@ -11,7 +11,7 @@ use eframe::{
 
 use crate::{
     app::AppData,
-    config::ConnectionConfig,
+    config::{ConnectionConfig, SqlifeConfig},
     db::{sgdb::SGDBKind, Message},
     Sqlife,
 };
@@ -53,32 +53,34 @@ pub enum CurrentView {
 }
 
 impl CurrentView {
-    pub fn init(&mut self, app_data: &mut AppData) {
+    pub fn init(&mut self, app_data: &mut AppData, config: &mut SqlifeConfig) {
         match self {
             CurrentView::HelloView => hello_view::HelloView.init(),
-            CurrentView::DBView(data) => db_view::DBView::from_app(app_data, data).init(),
+            CurrentView::DBView(data) => db_view::DBView::build(app_data, data, config).init(),
             CurrentView::MetaQueriesView(data) => {
-                meta_queries_view::MetaQueriesView::from_app(app_data, data).init()
+                meta_queries_view::MetaQueriesView::from_app(app_data, data, config).init()
             }
         };
     }
 
-    fn show(&mut self, app_data: &mut AppData, ui: &mut Ui) {
+    fn show(&mut self, app_data: &mut AppData, config: &mut SqlifeConfig, ui: &mut Ui) {
         match self {
             CurrentView::HelloView => hello_view::HelloView.show(ui),
-            CurrentView::DBView(data) => db_view::DBView::from_app(app_data, data).show(ui),
+            CurrentView::DBView(data) => db_view::DBView::build(app_data, data, config).show(ui),
             CurrentView::MetaQueriesView(data) => {
-                meta_queries_view::MetaQueriesView::from_app(app_data, data).show(ui)
+                meta_queries_view::MetaQueriesView::from_app(app_data, data, config).show(ui)
             }
         };
     }
 
-    fn show_appbar(&mut self, app_data: &mut AppData, ui: &mut Ui) {
+    fn show_appbar(&mut self, app_data: &mut AppData, config: &mut SqlifeConfig, ui: &mut Ui) {
         match self {
             CurrentView::HelloView => hello_view::HelloView.show_appbar(ui),
-            CurrentView::DBView(view) => db_view::DBView::from_app(app_data, view).show_appbar(ui),
+            CurrentView::DBView(view) => {
+                db_view::DBView::build(app_data, view, config).show_appbar(ui)
+            }
             CurrentView::MetaQueriesView(data) => {
-                meta_queries_view::MetaQueriesView::from_app(app_data, data).show_appbar(ui)
+                meta_queries_view::MetaQueriesView::from_app(app_data, data, config).show_appbar(ui)
             }
         }
     }
@@ -99,19 +101,31 @@ pub fn run(app: &mut Sqlife, ctx: &egui::Context) {
             .show_inside(ui, |ui| {
                 ui.horizontal(|ui| {
                     ui.menu_button("File", |ui| {
+                        if ui.button("Save config").clicked() {
+                            app.config.save().unwrap();
+
+                            ui.close_menu();
+                        }
                         if ui.button("Exit").clicked() {
                             std::process::exit(0);
                         }
                     });
+
                     ui.menu_button("Connections", |ui| {
-                        for (i, con) in app.data.connections.iter().enumerate() {
+                        let mut ret = None;
+
+                        for (i, con) in app.config.connections.iter().enumerate() {
                             if ui
-                                .radio(app.selected_connection() == Some(i), &con.name)
+                                .radio(app.data.current_connection == Some(i), &con.name)
                                 .clicked()
                             {
-                                // app.switch_connection::<ConnectionSchema>(con.clone().into());
-                                // app.switch_view(CurrentView::DBView(Default::default()));
+                                ret = Some(i);
+                                ui.close_menu();
                             }
+                        }
+
+                        if let Some(index) = ret {
+                            app.switch_connection(index);
                         }
 
                         ui.separator();
@@ -119,7 +133,10 @@ pub fn run(app: &mut Sqlife, ctx: &egui::Context) {
                             app.data.new_connection_win.open = true;
                             ui.close_menu();
                         }
+
+                        ret
                     });
+
                     ui.separator();
                     if ui
                         .selectable_label(matches!(app.view, CurrentView::DBView(_)), "Tables")
@@ -138,16 +155,12 @@ pub fn run(app: &mut Sqlife, ctx: &egui::Context) {
                     }
                     ui.separator();
 
-                    app.view.show_appbar(&mut app.data, ui);
+                    app.view.show_appbar(&mut app.data, &mut app.config, ui);
                 });
             });
 
-        app.view.show(&mut app.data, ui);
+        app.view.show(&mut app.data, &mut app.config, ui);
     });
-
-    app.data
-        .new_connection_win
-        .show(ctx, &mut app.data.connections);
 }
 
 #[derive(Default)]
